@@ -21,9 +21,17 @@ interface GitPanelProps {
   workspacePath: string | null;
   status: GitStatus | null;
   onRefresh: () => void;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info' | 'warning', title?: string) => void;
 }
 
-export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRefresh }) => {
+export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRefresh, onNotify }) => {
+  const notify = (msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'info', title = 'Git') => {
+    if (onNotify) {
+      onNotify(msg, type, title);
+    } else {
+      alert(`${title}: ${msg}`);
+    }
+  };
   const [commitMessage, setCommitMessage] = useState('');
   const [newBranchName, setNewBranchName] = useState('');
   const [sourceBranch, setSourceBranch] = useState('');
@@ -52,9 +60,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
       try {
         const res = await window.api.gitInit(workspacePath);
         if (res.success) {
+          notify('Dépôt Git initialisé avec succès !', 'success');
           onRefresh();
         } else {
-          alert('Erreur: ' + res.error);
+          notify('Erreur: ' + res.error, 'error');
         }
       } finally {
         setLoading(false);
@@ -88,9 +97,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
       const res = await window.api.gitCommit(workspacePath, commitMessage);
       if (res.success) {
         setCommitMessage('');
+        notify(`Commit validé avec succès (${res.commit ? res.commit.slice(0, 7) : ''})`, 'success');
         onRefresh();
       } else {
-        alert('Erreur commit: ' + res.error);
+        notify('Erreur commit: ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -103,10 +113,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
     try {
       const res = await window.api.gitPush(workspacePath, status?.currentBranch);
       if (res.success) {
-        alert('Code poussé avec succès sur le dépôt distant !');
+        notify('Code poussé avec succès sur le dépôt distant !', 'success');
         onRefresh();
       } else {
-        alert('Erreur Push (avez-vous configuré un remote ?): ' + res.error);
+        notify('Erreur Push (avez-vous configuré un remote ?): ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -119,9 +129,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
     try {
       const res = await window.api.gitPull(workspacePath);
       if (res.success) {
+        notify('Modifications distantes récupérées (Pull) avec succès !', 'success');
         onRefresh();
       } else {
-        alert('Erreur pull: ' + res.error);
+        notify('Erreur pull: ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -136,9 +147,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
       if (res.success) {
         setRemoteUrl('');
         setShowRemoteModal(false);
+        notify('Dépôt distant (origin) configuré avec succès !', 'success');
         onRefresh();
       } else {
-        alert('Erreur remote: ' + res.error);
+        notify('Erreur remote: ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -151,9 +163,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
     try {
       const res = await window.api.gitCheckout(workspacePath, branch, false);
       if (res.success) {
+        notify(`Basculé sur la branche "${branch}"`, 'success');
         onRefresh();
       } else {
-        alert('Erreur de bascule de branche : ' + res.error);
+        notify('Erreur de bascule de branche : ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -167,11 +180,13 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
       const baseBranch = sourceBranch || status?.currentBranch || undefined;
       const res = await window.api.gitCheckout(workspacePath, newBranchName.trim(), true, baseBranch);
       if (res.success) {
+        const createdName = newBranchName.trim();
         setNewBranchName('');
         setShowNewBranchInput(false);
+        notify(`Branche "${createdName}" créée et activée avec succès !`, 'success');
         onRefresh();
       } else if (res.error) {
-        alert('Erreur création de branche: ' + res.error);
+        notify('Erreur création de branche: ' + res.error, 'error');
       }
     } finally {
       setLoading(false);
@@ -181,7 +196,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
   const handleDeleteBranch = async (branch: string, force = false) => {
     if (!window.api) return;
     if (branch === status?.currentBranch) {
-      alert("Impossible de supprimer la branche actuellement active. Veuillez basculer sur une autre branche d'abord.");
+      notify("Impossible de supprimer la branche actuellement active. Veuillez basculer sur une autre branche d'abord.", 'warning');
       return;
     }
     if (!confirm(`Êtes-vous sûr de vouloir supprimer la branche "${branch}" ?`)) return;
@@ -190,12 +205,13 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
     try {
       const res = await window.api.gitDeleteBranch(workspacePath, branch, force);
       if (res.success) {
+        notify(`Branche "${branch}" supprimée.`, 'info');
         onRefresh();
       } else {
         if (!force && confirm(`La branche n'est pas entièrement fusionnée. Forcer la suppression (git branch -D) ?`)) {
           handleDeleteBranch(branch, true);
         } else {
-          alert('Erreur suppression: ' + res.error);
+          notify('Erreur suppression: ' + res.error, 'error');
         }
       }
     } finally {
@@ -207,7 +223,7 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
   const handleMergeBranch = async (branch: string) => {
     if (!window.api || !status?.currentBranch) return;
     if (branch === status.currentBranch) {
-      alert('Impossible de fusionner une branche avec elle-même.');
+      notify('Impossible de fusionner une branche avec elle-même.', 'warning');
       return;
     }
     if (!confirm(`Fusionner "${branch}" dans la branche active "${status.currentBranch}" ?`)) return;
@@ -216,10 +232,10 @@ export const GitPanel: React.FC<GitPanelProps> = ({ workspacePath, status, onRef
     try {
       const res = await window.api.gitMerge(workspacePath, branch);
       if (res.success) {
-        alert(`Branche "${branch}" fusionnée avec succès dans "${status.currentBranch}" !`);
+        notify(`Branche "${branch}" fusionnée avec succès dans "${status.currentBranch}" !`, 'success');
         onRefresh();
       } else {
-        alert('Erreur lors du merge (conflit potentiel) : ' + res.error);
+        notify('Erreur lors du merge (conflit potentiel) : ' + res.error, 'error');
       }
     } finally {
       setLoading(false);

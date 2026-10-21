@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld('api', {
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', { filePath, content }),
   createFile: (filePath) => ipcRenderer.invoke('fs:createFile', filePath),
+  searchFiles: (params) => ipcRenderer.invoke('fs:searchFiles', params),
+
+  // App & System
+  openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
 
   // Git (100% via UI)
   gitInit: (repoPath) => ipcRenderer.invoke('git:init', repoPath),

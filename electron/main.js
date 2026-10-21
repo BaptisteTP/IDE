@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { simpleGit } = require('simple-git');
@@ -317,29 +317,37 @@ ipcMain.handle('process:list', async () => {
           const name = (p.Name || '').toLowerCase();
           const cmd = (p.CommandLine || '').toLowerCase();
 
-          // Match dev runners and scripts
+          // Match dev runners, scripts, and general cli/compilers/terminals
           const isDevProcess =
-            ['node.exe', 'python.exe', 'pythonw.exe', 'cargo.exe', 'go.exe', 'dotnet.exe', 'bun.exe', 'deno.exe'].includes(name) ||
+            ['node.exe', 'python.exe', 'pythonw.exe', 'cargo.exe', 'go.exe', 'dotnet.exe', 'bun.exe', 'deno.exe', 'cmd.exe', 'powershell.exe', 'pwsh.exe', 'bash.exe', 'wsl.exe', 'git.exe', 'java.exe', 'ruby.exe', 'php.exe'].includes(name) ||
             cmd.includes('vite') ||
-            cmd.includes('npm run') ||
+            cmd.includes('npm') ||
             cmd.includes('npx') ||
+            cmd.includes('yarn') ||
+            cmd.includes('pnpm') ||
             cmd.includes('react-scripts') ||
-            cmd.includes('next dev') ||
+            cmd.includes('next') ||
             cmd.includes('nodemon') ||
             cmd.includes('webpack');
 
-          // Exclude system background agents
-          return isDevProcess && !cmd.includes('antigravity');
+          // Exclude this main ide process
+          return isDevProcess && !cmd.includes('antigravity-ide') && p.ProcessId !== process.pid;
         }).map((p) => {
           let label = p.Name;
           const cmd = p.CommandLine || '';
           if (cmd.includes('vite')) label = 'Vite Dev Server';
-          else if (cmd.includes('npm run')) {
-            const match = cmd.match(/run\s+([a-zA-Z0-9_\-:]+)/i);
-            label = match ? `npm run ${match[1]}` : 'npm script';
+          else if (cmd.includes('npm run') || cmd.includes('npm ')) {
+            const match = cmd.match(/run\s+([a-zA-Z0-9_\-:]+)/i) || cmd.match(/npm(?:\.cmd)?\s+([a-zA-Z0-9_\-:]+)/i);
+            label = match ? `npm ${match[1]}` : 'npm session';
+          } else if (p.Name.toLowerCase().includes('powershell') || p.Name.toLowerCase().includes('cmd') || p.Name.toLowerCase().includes('bash') || p.Name.toLowerCase().includes('pwsh')) {
+            label = `CLI: ${p.Name.replace('.exe', '')}`;
           } else if (cmd.includes('node') && cmd.length > 10) {
             const parts = cmd.split(/[\/\\]/);
             label = `node: ${parts[parts.length - 1].split(' ')[0].replace(/\"/g, '')}`;
+          } else if (p.Name.toLowerCase().includes('python')) {
+            label = `Python session (${p.Name})`;
+          } else if (p.Name.toLowerCase().includes('cargo') || p.Name.toLowerCase().includes('go') || p.Name.toLowerCase().includes('dotnet')) {
+            label = `${p.Name.replace('.exe', '')} session`;
           }
 
           return {
@@ -366,12 +374,109 @@ ipcMain.handle('process:kill', async (_, pid) => {
   } catch (err) {
     try {
       const { exec } = require('child_process');
-      exec(`taskkill /F /PID ${pid}`);
+      // /T terminates process and any child processes, /F forces termination
+      await new Promise((res, rej) => {
+        exec(`taskkill /F /T /PID ${pid}`, (e) => {
+          if (e) rej(e);
+          else res();
+        });
+      });
       return { success: true };
     } catch (e) {
-      return { success: false, error: err.message };
+      return { success: false, error: e.message || err.message };
     }
   }
+});
+
+// Open external URL in default system browser
+ipcMain.handle('app:openExternal', async (_, url) => {
+  try {
+    if (!url || typeof url !== 'string') return { success: false, error: 'URL invalide' };
+    const parsed = new URL(url);
+    if (!['http:', 'https:', 'mailto:'].includes(parsed.protocol)) {
+      return { success: false, error: 'Protocole non supporté' };
+    }
+    await shell.openExternal(parsed.href);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Search across workspace files
+ipcMain.handle('fs:searchFiles', async (_, { dirPath, query, matchCase = false, isRegex = false }) => {
+  if (!dirPath || !query || !fs.existsSync(dirPath)) return [];
+
+  const results = [];
+  const MAX_RESULTS = 250;
+  const IGNORE_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.idea', '.vscode', 'release', '.next']);
+  const IGNORE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.ico', '.pdf', '.exe', '.dll', '.zip', '.tar', '.gz', '.woff', '.woff2', '.ttf', '.eot', '.mp4', '.mp3', '.bin', '.lock']);
+
+  let matcher;
+  try {
+    if (isRegex) {
+      matcher = new RegExp(query, matchCase ? 'g' : 'gi');
+    } else {
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      matcher = new RegExp(escaped, matchCase ? 'g' : 'gi');
+    }
+  } catch (e) {
+    return [];
+  }
+
+  async function walk(currentDir) {
+    if (results.length >= MAX_RESULTS) return;
+    let entries;
+    try {
+      entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+    } catch (e) {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (results.length >= MAX_RESULTS) break;
+      const fullPath = path.join(currentDir, entry.name);
+
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name)) {
+          await walk(fullPath);
+        }
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (IGNORE_EXTENSIONS.has(ext)) continue;
+
+        try {
+          const stats = await fs.promises.stat(fullPath);
+          if (stats.size > 1024 * 1024) continue; // Skip files > 1MB
+
+          const content = await fs.promises.readFile(fullPath, 'utf8');
+          const lines = content.split('\n');
+
+          for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            if (results.length >= MAX_RESULTS) break;
+            const line = lines[lineIndex];
+            matcher.lastIndex = 0;
+            let match;
+            while ((match = matcher.exec(line)) !== null) {
+              results.push({
+                filePath: fullPath,
+                fileName: entry.name,
+                relativePath: path.relative(dirPath, fullPath).replace(/\\/g, '/'),
+                lineNumber: lineIndex + 1,
+                column: match.index + 1,
+                lineContent: line.trimEnd(),
+                matchText: match[0]
+              });
+              if (!matcher.global || results.length >= MAX_RESULTS) break;
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  await walk(dirPath);
+  return results;
 });
 
 ipcMain.handle('git:log', async (_, repoPath) => {
