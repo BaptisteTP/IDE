@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 
 interface TerminalViewProps {
   id: string;
@@ -29,12 +30,45 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ id, cwd }) => {
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+
+    // Addon to detect links and open in external browser with Ctrl+Click
+    const webLinksAddon = new WebLinksAddon((event, uri) => {
+      // Require Ctrl or Cmd key to open external link
+      if (event.ctrlKey || event.metaKey) {
+        if (window.api?.openExternal) {
+          window.api.openExternal(uri);
+        } else {
+          window.open(uri, '_blank');
+        }
+      }
+    });
+    term.loadAddon(webLinksAddon);
+
     term.open(containerRef.current);
     terminalRef.current = term;
 
-    // Handle backspace and delete key codes explicitly to avoid any pty/xterm desync
+    // Handle Copy / Paste and custom keys
     term.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown') {
+        // Ctrl+C: if text is selected, copy to clipboard instead of sending interrupt
+        if ((event.ctrlKey || event.metaKey) && (event.key === 'c' || event.key === 'C')) {
+          const selection = term.getSelection();
+          if (selection && selection.length > 0) {
+            navigator.clipboard.writeText(selection);
+            return false;
+          }
+        }
+
+        // Ctrl+V: paste from clipboard
+        if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
+          navigator.clipboard.readText().then((text) => {
+            if (text) {
+              window.api?.writeTerminal(id, text);
+            }
+          }).catch(() => {});
+          return false;
+        }
+
         if (event.key === 'Backspace') {
           window.api?.writeTerminal(id, '\x08');
           return false;

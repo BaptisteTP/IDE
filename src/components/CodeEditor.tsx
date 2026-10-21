@@ -86,6 +86,138 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       noSemanticValidation: false,
       noSyntaxValidation: false
     });
+
+    // Register Inlay Hints provider for function dependency analysis
+    // Detects imported items/modules used inside function bodies and displays them next to the function declaration
+    const supportedLanguages = ['typescript', 'javascript'];
+    
+    // Check if provider is already registered to avoid duplicates
+    if (!(monaco as any).__funcDepsProviderRegistered) {
+      (monaco as any).__funcDepsProviderRegistered = true;
+
+      const provider = {
+        provideInlayHints(model: any) {
+          const hints: any[] = [];
+          const text = model.getValue();
+          const lines = text.split('\n');
+
+          // 1. Collect all imported identifiers: import { a, b } from 'pkg', import c from 'pkg', const d = require('pkg')
+          const imports: { name: string; source: string }[] = [];
+          const importNamedRegex = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
+          const importDefaultRegex = /import\s+([a-zA-Z0-9_$]+)\s*(?:,\s*\{([^}]+)\})?\s+from\s+['"]([^'"]+)['"]/g;
+          const requireRegex = /(?:const|let|var)\s+(?:\{([^}]+)\}|([a-zA-Z0-9_$]+))\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+          let match;
+          while ((match = importNamedRegex.exec(text)) !== null) {
+            const names = match[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
+            names.forEach((n) => {
+              if (n) imports.push({ name: n, source: match[2] });
+            });
+          }
+
+          while ((match = importDefaultRegex.exec(text)) !== null) {
+            if (match[1]) imports.push({ name: match[1].trim(), source: match[3] });
+            if (match[2]) {
+              const names = match[2].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
+              names.forEach((n) => {
+                if (n) imports.push({ name: n, source: match[3] });
+              });
+            }
+          }
+
+          while ((match = requireRegex.exec(text)) !== null) {
+            const source = match[3];
+            if (match[1]) {
+              const names = match[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
+              names.forEach((n) => {
+                if (n) imports.push({ name: n, source });
+              });
+            } else if (match[2]) {
+              imports.push({ name: match[2].trim(), source });
+            }
+          }
+
+          if (imports.length === 0) {
+            return { hints: [], dispose: () => {} };
+          }
+
+          // 2. Identify function declarations & arrow functions
+          // e.g.: function foo(...) {, const bar = (...) => {, const baz = async function(...) {
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const funcMatch =
+              line.match(/(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/) ||
+              line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/) ||
+              line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?[a-zA-Z0-9_$]+\s*=>/);
+
+            if (funcMatch) {
+              const funcName = funcMatch[1];
+              // Find function declaration column
+              const nameIndex = line.indexOf(funcName);
+              if (nameIndex === -1) continue;
+
+              // Read function body (next ~50 lines or until balanced braces)
+              const bodyLines: string[] = [];
+              let braceCount = 0;
+              let bodyStarted = false;
+
+              for (let j = i; j < Math.min(i + 60, lines.length); j++) {
+                const cur = lines[j];
+                for (const char of cur) {
+                  if (char === '{') {
+                    braceCount++;
+                    bodyStarted = true;
+                  } else if (char === '}') {
+                    braceCount--;
+                  }
+                }
+                bodyLines.push(cur);
+                if (bodyStarted && braceCount <= 0) break;
+              }
+
+              const bodyText = bodyLines.join('\n');
+
+              // Find which imported dependencies are referenced inside this function
+              const usedDeps = new Set<string>();
+              for (const imp of imports) {
+                if (imp.name === funcName) continue; // Don't self-reference
+                const depWordRegex = new RegExp(`\\b${imp.name}\\b`);
+                if (depWordRegex.test(bodyText)) {
+                  usedDeps.add(imp.name);
+                }
+              }
+
+              if (usedDeps.size > 0) {
+                const depsList = Array.from(usedDeps).slice(0, 4);
+                const extraCount = usedDeps.size - depsList.length;
+                const labelText = `[deps: ${depsList.join(', ')}${extraCount > 0 ? ` +${extraCount}` : ''}]`;
+
+                hints.push({
+                  kind: monaco.languages.InlayHintKind.Type,
+                  position: {
+                    lineNumber: i + 1,
+                    column: nameIndex + funcName.length + 1
+                  },
+                  label: labelText,
+                  tooltip: `Dépendances externes utilisées par ${funcName} :\n${Array.from(usedDeps).join(', ')}`,
+                  paddingLeft: true,
+                  paddingRight: true
+                });
+              }
+            }
+          }
+
+          return {
+            hints,
+            dispose: () => {}
+          };
+        }
+      };
+
+      supportedLanguages.forEach((lang) => {
+        monaco.languages.registerInlayHintsProvider(lang, provider);
+      });
+    }
   };
 
   if (!filePath) {
@@ -186,7 +318,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                 tabSize,
                 cursorBlinking: 'smooth',
                 quickSuggestions: true,
-                suggestOnTriggerCharacters: true
+                suggestOnTriggerCharacters: true,
+                inlayHints: {
+                  enabled: 'on'
+                }
               }}
             />
           </div>

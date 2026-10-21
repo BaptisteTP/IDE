@@ -15,9 +15,10 @@ import {
   ListOrdered,
   Layers,
   ChevronDown,
-  Activity
+  Activity,
+  Search
 } from 'lucide-react';
-import { FileItem, GitStatus, TerminalTab, AppSettings, ExecutionLogItem } from './types';
+import { FileItem, GitStatus, TerminalTab, AppSettings, ExecutionLogItem, ToastNotification } from './types';
 import { THEMES, ThemeConfig } from './theme';
 import { FileExplorer } from './components/FileExplorer';
 import { GitPanel } from './components/GitPanel';
@@ -30,6 +31,8 @@ import { GitInitPromptModal } from './components/GitInitPromptModal';
 import { ExecutionLogsPanel } from './components/ExecutionLogsPanel';
 import { RunLauncherModal } from './components/RunLauncherModal';
 import { ProcessManagerPanel } from './components/ProcessManagerPanel';
+import { SearchPanel } from './components/SearchPanel';
+import { ToastContainer } from './components/ToastContainer';
 
 const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 14,
@@ -51,7 +54,21 @@ const DEFAULT_SETTINGS: AppSettings = {
 export function App() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
-  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'ai' | 'http' | 'logs' | 'processes' | null>('files');
+  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'search' | 'ai' | 'http' | 'logs' | 'processes' | null>('files');
+  const [toasts, setToasts] = useState<ToastNotification[]>([]);
+
+  const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info', title?: string) => {
+    const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    const newToast: ToastNotification = { id, message, type, title, timestamp: Date.now() };
+    setToasts((prev) => [...prev, newToast]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4500);
+  }, []);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // Settings
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -361,7 +378,7 @@ export function App() {
     }
   };
 
-  // Global keyboard shortcuts (Ctrl+S for save, Ctrl+, for settings)
+  // Global keyboard shortcuts (Ctrl+S for save, Ctrl+, for settings, Ctrl+Shift+F for search)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -371,6 +388,10 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key === ',') {
         e.preventDefault();
         setIsSettingsOpen(true);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+        e.preventDefault();
+        setActiveSidePanel('search');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -470,63 +491,6 @@ export function App() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Execution Logs & Errors button */}
-          <button
-            onClick={() => setActiveSidePanel(activeSidePanel === 'logs' ? null : 'logs')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition shadow-sm ${
-              activeSidePanel === 'logs'
-                ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-amber-500/20'
-                : `${themeConfig.styles.bgInput} hover:opacity-90 ${themeConfig.styles.textSecondary}`
-            }`}
-          >
-            <ListOrdered size={13} className="text-amber-400" />
-            <span>Logs & Erreurs</span>
-            {executionLogs.filter((l) => l.status === 'error').length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold">
-                {executionLogs.filter((l) => l.status === 'error').length}
-              </span>
-            )}
-          </button>
-
-          {/* Postman-like HTTP Tester button */}
-          <button
-            onClick={() => setActiveSidePanel(activeSidePanel === 'http' ? null : 'http')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition shadow-sm ${
-              activeSidePanel === 'http'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-emerald-500/20'
-                : `${themeConfig.styles.bgInput} hover:opacity-90 ${themeConfig.styles.textSecondary}`
-            }`}
-          >
-            <Globe size={13} className="text-emerald-400" />
-            <span>API Tester</span>
-          </button>
-
-          {/* AI Assistant button */}
-          <button
-            onClick={() => setActiveSidePanel(activeSidePanel === 'ai' ? null : 'ai')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition shadow-sm ${
-              activeSidePanel === 'ai'
-                ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-purple-500/20'
-                : `${themeConfig.styles.bgInput} hover:opacity-90 ${themeConfig.styles.textSecondary}`
-            }`}
-          >
-            <Sparkles size={13} className="text-purple-400" />
-            <span>Assistant IA</span>
-          </button>
-
-          {/* Running dev processes button */}
-          <button
-            onClick={() => setActiveSidePanel(activeSidePanel === 'processes' ? null : 'processes')}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition shadow-sm ${
-              activeSidePanel === 'processes'
-                ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow-teal-500/20'
-                : `${themeConfig.styles.bgInput} hover:opacity-90 ${themeConfig.styles.textSecondary}`
-            }`}
-          >
-            <Activity size={13} className="text-emerald-400" />
-            <span>Processus</span>
-          </button>
-
           {/* Settings modal trigger */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -563,6 +527,18 @@ export function App() {
             }`}
           >
             <Files size={18} />
+          </button>
+
+          <button
+            onClick={() => setActiveSidePanel(activeSidePanel === 'search' ? null : 'search')}
+            title="Rechercher dans tous les fichiers (Ctrl+Shift+F)"
+            className={`p-2 rounded-xl transition ${
+              activeSidePanel === 'search'
+                ? 'bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 shadow'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+            }`}
+          >
+            <Search size={18} />
           </button>
 
           <button
@@ -657,11 +633,22 @@ export function App() {
                 />
               )}
 
+              {activeSidePanel === 'search' && (
+                <SearchPanel
+                  workspacePath={workspacePath}
+                  themeConfig={themeConfig}
+                  onSelectResult={(filePath) => {
+                    handleSelectFile(filePath);
+                  }}
+                />
+              )}
+
               {activeSidePanel === 'git' && (
                 <GitPanel
                   workspacePath={workspacePath}
                   status={gitStatus}
                   onRefresh={refreshGit}
+                  onNotify={addToast}
                 />
               )}
 
@@ -691,7 +678,7 @@ export function App() {
               )}
 
               {activeSidePanel === 'processes' && (
-                <ProcessManagerPanel themeConfig={themeConfig} />
+                <ProcessManagerPanel themeConfig={themeConfig} onNotify={addToast} />
               )}
             </div>
 
@@ -872,6 +859,9 @@ export function App() {
         onCancel={() => setShowGitInitPrompt(false)}
         loading={isGitInitLoading}
       />
+
+      {/* In-app Notification Toasts */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

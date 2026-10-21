@@ -146,6 +146,24 @@ export interface ProjectTechnicalSettings {
   pythonVenv?: string;
 }
 
+export interface SearchResultItem {
+  filePath: string;
+  fileName: string;
+  relativePath: string;
+  lineNumber: number;
+  column: number;
+  lineContent: string;
+  matchText: string;
+}
+
+export interface ToastNotification {
+  id: string;
+  type: 'success' | 'error' | 'info' | 'warning';
+  title?: string;
+  message: string;
+  timestamp: number;
+}
+
 export interface AppSettings extends EditorSettings, ProjectTechnicalSettings {
   geminiApiKey: string;
 }
@@ -158,12 +176,19 @@ declare global {
       readFile: (filePath: string) => Promise<string>;
       writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
       createFile: (filePath: string) => Promise<{ success: boolean }>;
+      searchFiles: (params: {
+        dirPath: string;
+        query: string;
+        matchCase?: boolean;
+        isRegex?: boolean;
+      }) => Promise<SearchResultItem[]>;
+      openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
       gitInit: (repoPath: string) => Promise<{ success: boolean; error?: string }>;
       gitClone: (targetDir: string, repoUrl: string) => Promise<{ success: boolean; error?: string }>;
       gitAddRemote: (repoPath: string, name: string, url: string) => Promise<{ success: boolean; error?: string }>;
       getGitStatus: (repoPath: string) => Promise<GitStatus>;
-      gitCommit: (repoPath: string, message: string) => Promise<{ success: boolean; error?: string }>;
+      gitCommit: (repoPath: string, message: string) => Promise<{ success: boolean; commit?: string; error?: string }>;
       gitPush: (repoPath: string, branch?: string) => Promise<{ success: boolean; error?: string }>;
       gitPull: (repoPath: string) => Promise<{ success: boolean; error?: string }>;
       gitCheckout: (repoPath: string, branch: string, create?: boolean, startPoint?: string) => Promise<{ success: boolean; error?: string }>;

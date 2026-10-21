@@ -5,9 +5,10 @@ import { ThemeConfig } from '../theme';
 
 interface ProcessManagerPanelProps {
   themeConfig: ThemeConfig;
+  onNotify?: (message: string, type?: 'success' | 'error' | 'info' | 'warning', title?: string) => void;
 }
 
-export const ProcessManagerPanel: React.FC<ProcessManagerPanelProps> = ({ themeConfig }) => {
+export const ProcessManagerPanel: React.FC<ProcessManagerPanelProps> = ({ themeConfig, onNotify }) => {
   const [processes, setProcesses] = useState<RunningProcessItem[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [terminatingPid, setTerminatingPid] = useState<number | null>(null);
@@ -32,15 +33,23 @@ export const ProcessManagerPanel: React.FC<ProcessManagerPanelProps> = ({ themeC
     return () => clearInterval(interval);
   }, []);
 
-  const handleKill = async (pid: number) => {
+  const handleKill = async (pid: number, label: string) => {
     if (!window.api?.killProcess) return;
     setTerminatingPid(pid);
     try {
       const res = await window.api.killProcess(pid);
       if (res.success) {
         setProcesses((prev) => prev.filter((p) => p.pid !== pid));
+        if (onNotify) {
+          onNotify(`Processus ${label} (PID: ${pid}) arrêté avec succès.`, 'success', 'Gestionnaire de processus');
+        }
       } else {
-        alert(`Impossible d'arrêter le processus (${pid}) : ${res.error || 'Erreur inconnue'}`);
+        const errorMsg = `Impossible d'arrêter le processus (${pid}) : ${res.error || 'Erreur inconnue'}`;
+        if (onNotify) {
+          onNotify(errorMsg, 'error', 'Erreur arrêt de tâche');
+        } else {
+          alert(errorMsg);
+        }
       }
     } finally {
       setTerminatingPid(null);
@@ -125,7 +134,7 @@ export const ProcessManagerPanel: React.FC<ProcessManagerPanelProps> = ({ themeC
                   </div>
 
                   <button
-                    onClick={() => handleKill(proc.pid)}
+                    onClick={() => handleKill(proc.pid, proc.label)}
                     disabled={isTerminating}
                     title="Arrêter ce processus immédiatement"
                     className="flex items-center gap-1 px-2 py-1 bg-rose-500/15 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 rounded-lg font-medium text-[10px] transition shrink-0 active:scale-95 disabled:opacity-50"
