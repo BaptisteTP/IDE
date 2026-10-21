@@ -273,6 +273,107 @@ ipcMain.handle('git:checkout', async (_, { repoPath, branch, create, startPoint 
   }
 });
 
+ipcMain.handle('git:deleteBranch', async (_, { repoPath, branch, force = false }) => {
+  try {
+    const targetPath = findGitRepoPath(repoPath) || repoPath;
+    const git = simpleGit(targetPath);
+    const result = await git.deleteLocalBranch(branch, force);
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('git:merge', async (_, { repoPath, branch }) => {
+  try {
+    const targetPath = findGitRepoPath(repoPath) || repoPath;
+    const git = simpleGit(targetPath);
+    const result = await git.merge([branch]);
+    return { success: true, result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// --- IPC: Process Manager (Tasks running on system: node, python, vite, etc.) ---
+ipcMain.handle('process:list', async () => {
+  return new Promise((resolve) => {
+    const { execFile } = require('child_process');
+    const psArgs = [
+      '-NoProfile',
+      '-Command',
+      '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine, CreationDate | ConvertTo-Json -Compress'
+    ];
+
+    execFile('powershell', psArgs, { maxBuffer: 30 * 1024 * 1024 }, (err, stdout) => {
+      if (err || !stdout) {
+        return resolve([]);
+      }
+      try {
+        const list = JSON.parse(stdout);
+        const arr = Array.isArray(list) ? list : [list];
+        const filtered = arr.filter((p) => {
+          if (!p || !p.ProcessId) return false;
+          const name = (p.Name || '').toLowerCase();
+          const cmd = (p.CommandLine || '').toLowerCase();
+
+          // Match dev runners and scripts
+          const isDevProcess =
+            ['node.exe', 'python.exe', 'pythonw.exe', 'cargo.exe', 'go.exe', 'dotnet.exe', 'bun.exe', 'deno.exe'].includes(name) ||
+            cmd.includes('vite') ||
+            cmd.includes('npm run') ||
+            cmd.includes('npx') ||
+            cmd.includes('react-scripts') ||
+            cmd.includes('next dev') ||
+            cmd.includes('nodemon') ||
+            cmd.includes('webpack');
+
+          // Exclude system background agents
+          return isDevProcess && !cmd.includes('antigravity');
+        }).map((p) => {
+          let label = p.Name;
+          const cmd = p.CommandLine || '';
+          if (cmd.includes('vite')) label = 'Vite Dev Server';
+          else if (cmd.includes('npm run')) {
+            const match = cmd.match(/run\s+([a-zA-Z0-9_\-:]+)/i);
+            label = match ? `npm run ${match[1]}` : 'npm script';
+          } else if (cmd.includes('node') && cmd.length > 10) {
+            const parts = cmd.split(/[\/\\]/);
+            label = `node: ${parts[parts.length - 1].split(' ')[0].replace(/\"/g, '')}`;
+          }
+
+          return {
+            pid: p.ProcessId,
+            name: p.Name,
+            label,
+            commandLine: p.CommandLine || '',
+            date: p.CreationDate ? new Date(parseInt(p.CreationDate.match(/\d+/)?.[0] || Date.now())).toLocaleTimeString() : ''
+          };
+        });
+
+        resolve(filtered);
+      } catch (e) {
+        resolve([]);
+      }
+    });
+  });
+});
+
+ipcMain.handle('process:kill', async (_, pid) => {
+  try {
+    process.kill(pid, 'SIGKILL');
+    return { success: true };
+  } catch (err) {
+    try {
+      const { exec } = require('child_process');
+      exec(`taskkill /F /PID ${pid}`);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: err.message };
+    }
+  }
+});
+
 ipcMain.handle('git:log', async (_, repoPath) => {
   try {
     const targetPath = findGitRepoPath(repoPath) || repoPath;

@@ -17,7 +17,13 @@ contextBridge.exposeInMainWorld('api', {
   gitPush: (repoPath, branch) => ipcRenderer.invoke('git:push', { repoPath, branch }),
   gitPull: (repoPath) => ipcRenderer.invoke('git:pull', { repoPath }),
   gitCheckout: (repoPath, branch, create = false, startPoint = undefined) => ipcRenderer.invoke('git:checkout', { repoPath, branch, create, startPoint }),
+  gitDeleteBranch: (repoPath, branch, force = false) => ipcRenderer.invoke('git:deleteBranch', { repoPath, branch, force }),
+  gitMerge: (repoPath, branch) => ipcRenderer.invoke('git:merge', { repoPath, branch }),
   getGitLog: (repoPath) => ipcRenderer.invoke('git:log', repoPath),
+
+  // Process / Tasks Manager (Running dev servers, npm run dev, etc.)
+  listRunningProcesses: () => ipcRenderer.invoke('process:list'),
+  killProcess: (pid) => ipcRenderer.invoke('process:kill', pid),
 
   // HTTP Tester (Postman-like)
   httpRequest: (params) => ipcRenderer.invoke('http:request', params),

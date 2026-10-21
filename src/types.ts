@@ -35,6 +35,14 @@ export interface GitCommitItem {
   author_name: string;
 }
 
+export interface RunningProcessItem {
+  pid: number;
+  name: string;
+  label: string;
+  commandLine: string;
+  date?: string;
+}
+
 export interface TerminalTab {
   id: string;
   title: string;
@@ -159,6 +167,8 @@ declare global {
       gitPush: (repoPath: string, branch?: string) => Promise<{ success: boolean; error?: string }>;
       gitPull: (repoPath: string) => Promise<{ success: boolean; error?: string }>;
       gitCheckout: (repoPath: string, branch: string, create?: boolean, startPoint?: string) => Promise<{ success: boolean; error?: string }>;
+      gitDeleteBranch: (repoPath: string, branch: string, force?: boolean) => Promise<{ success: boolean; error?: string }>;
+      gitMerge: (repoPath: string, branch: string) => Promise<{ success: boolean; error?: string }>;
       getGitLog: (repoPath: string) => Promise<GitCommitItem[]>;
 
       httpRequest: (params: HttpRequestOptions) => Promise<HttpResponseResult>;
@@ -171,6 +181,10 @@ declare global {
       }) => Promise<{ success: boolean; text?: string; error?: string }>;
       listAgySessions: () => Promise<AgySessionSummary[]>;
       getAgySessionDetails: (sessionId: string) => Promise<AgySessionDetails | null>;
+
+      // Processes Manager
+      listRunningProcesses: () => Promise<RunningProcessItem[]>;
+      killProcess: (pid: number) => Promise<{ success: boolean; error?: string }>;
 
       spawnTerminal: (id: string, cwd?: string, cols?: number, rows?: number) => void;
       writeTerminal: (id: string, data: string) => void;

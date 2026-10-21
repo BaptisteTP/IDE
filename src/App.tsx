@@ -14,7 +14,8 @@ import {
   Check,
   ListOrdered,
   Layers,
-  ChevronDown
+  ChevronDown,
+  Activity
 } from 'lucide-react';
 import { FileItem, GitStatus, TerminalTab, AppSettings, ExecutionLogItem } from './types';
 import { THEMES, ThemeConfig } from './theme';
@@ -28,6 +29,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { GitInitPromptModal } from './components/GitInitPromptModal';
 import { ExecutionLogsPanel } from './components/ExecutionLogsPanel';
 import { RunLauncherModal } from './components/RunLauncherModal';
+import { ProcessManagerPanel } from './components/ProcessManagerPanel';
 
 const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 14,
@@ -49,7 +51,7 @@ const DEFAULT_SETTINGS: AppSettings = {
 export function App() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [files, setFiles] = useState<FileItem[]>([]);
-  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'ai' | 'http' | 'logs' | null>('files');
+  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'ai' | 'http' | 'logs' | 'processes' | null>('files');
 
   // Settings
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -138,6 +140,17 @@ export function App() {
       setActiveFilePath(null);
       setFileContent('');
       setOriginalContent('');
+
+      // Update primary terminal to the opened folder
+      setTerminals((prev) => {
+        if (prev.length === 0) return [{ id: 'term-1', title: 'Terminal 1', cwd: folder }];
+        return prev.map((t, idx) => (idx === 0 ? { ...t, cwd: folder } : t));
+      });
+
+      // Send cd command to active terminal so terminal navigates immediately
+      if (window.api?.writeTerminal) {
+        window.api.writeTerminal(activeTerminalId, `cd /d "${folder}"\r\n`);
+      }
     }
   };
 
@@ -408,15 +421,6 @@ export function App() {
       {/* Top Application Bar */}
       <header className={`h-10 ${themeConfig.styles.bgHeader} border ${themeConfig.styles.border} rounded-2xl flex items-center justify-between px-4 text-xs shadow-md`}>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-gradient-to-r from-blue-500 to-indigo-500 shadow-sm" />
-            <span className="font-bold tracking-wider bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">
-              ANTIGRAVITY IDE
-            </span>
-          </div>
-
-          <div className="h-4 w-[1px] bg-neutral-800 mx-1" />
-
           <button
             onClick={handleOpenFolder}
             className={`flex items-center gap-1.5 px-3 py-1 ${themeConfig.styles.bgInput} hover:opacity-90 rounded-xl ${themeConfig.styles.textSecondary} hover:${themeConfig.styles.textPrimary} transition shadow-sm font-medium`}
@@ -510,6 +514,19 @@ export function App() {
             <span>Assistant IA</span>
           </button>
 
+          {/* Running dev processes button */}
+          <button
+            onClick={() => setActiveSidePanel(activeSidePanel === 'processes' ? null : 'processes')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-semibold transition shadow-sm ${
+              activeSidePanel === 'processes'
+                ? 'bg-gradient-to-r from-teal-600 to-emerald-600 text-white shadow-teal-500/20'
+                : `${themeConfig.styles.bgInput} hover:opacity-90 ${themeConfig.styles.textSecondary}`
+            }`}
+          >
+            <Activity size={13} className="text-emerald-400" />
+            <span>Processus</span>
+          </button>
+
           {/* Settings modal trigger */}
           <button
             onClick={() => setIsSettingsOpen(true)}
@@ -592,7 +609,7 @@ export function App() {
 
           <button
             onClick={() => setActiveSidePanel(activeSidePanel === 'ai' ? null : 'ai')}
-            title="Générateur de code IA (Claude/Gemini style)"
+            title="Assistant IA AGY"
             className={`p-2 rounded-xl transition ${
               activeSidePanel === 'ai'
                 ? 'bg-purple-600/20 text-purple-400 border border-purple-500/30 shadow'
@@ -600,6 +617,18 @@ export function App() {
             }`}
           >
             <Sparkles size={18} />
+          </button>
+
+          <button
+            onClick={() => setActiveSidePanel(activeSidePanel === 'processes' ? null : 'processes')}
+            title="Processus & Tâches actives (npm run dev, python, vite...)"
+            className={`p-2 rounded-xl transition ${
+              activeSidePanel === 'processes'
+                ? 'bg-teal-600/20 text-teal-400 border border-teal-500/30 shadow'
+                : 'text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/40'
+            }`}
+          >
+            <Activity size={18} />
           </button>
 
           <div className="mt-auto">
@@ -659,6 +688,10 @@ export function App() {
                   onRunTechnicalCommand={(cmd) => executeTrackedCommand(cmd, 'custom')}
                   workspacePath={workspacePath}
                 />
+              )}
+
+              {activeSidePanel === 'processes' && (
+                <ProcessManagerPanel themeConfig={themeConfig} />
               )}
             </div>
 
