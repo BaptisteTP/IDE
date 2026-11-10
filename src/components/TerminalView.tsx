@@ -59,14 +59,10 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ id, cwd }) => {
           }
         }
 
-        // Ctrl+V: paste from clipboard
+        // Ctrl+V: let browser/xterm handle paste or read once from clipboard
         if ((event.ctrlKey || event.metaKey) && (event.key === 'v' || event.key === 'V')) {
-          navigator.clipboard.readText().then((text) => {
-            if (text) {
-              window.api?.writeTerminal(id, text);
-            }
-          }).catch(() => {});
-          return false;
+          // Do not send manual writeTerminal here to avoid duplicate paste with onData
+          return true;
         }
 
         if (event.key === 'Backspace') {

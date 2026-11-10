@@ -7,6 +7,10 @@ contextBridge.exposeInMainWorld('api', {
   readFile: (filePath) => ipcRenderer.invoke('fs:readFile', filePath),
   writeFile: (filePath, content) => ipcRenderer.invoke('fs:writeFile', { filePath, content }),
   createFile: (filePath) => ipcRenderer.invoke('fs:createFile', filePath),
+  createDirectory: (dirPath) => ipcRenderer.invoke('fs:createDirectory', dirPath),
+  moveItem: (sourcePath, targetPath) => ipcRenderer.invoke('fs:moveItem', { sourcePath, targetPath }),
+  renameItem: (oldPath, newPath) => ipcRenderer.invoke('fs:renameItem', { oldPath, newPath }),
+  deleteItem: (targetPath) => ipcRenderer.invoke('fs:deleteItem', targetPath),
   searchFiles: (params) => ipcRenderer.invoke('fs:searchFiles', params),
 
   // App & System

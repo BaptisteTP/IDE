@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import Editor, { Monaco } from '@monaco-editor/react';
-import { Eye, Code, Save, Check } from 'lucide-react';
+import { Eye, Code, Save, Check, X, FileText, SplitSquareHorizontal } from 'lucide-react';
 import { FileIcon } from './FileIcon';
 import { MarkdownViewer } from './MarkdownViewer';
+import { OpenTab } from '../types';
 
 interface CodeEditorProps {
-  filePath: string | null;
-  content: string;
+  tabs: OpenTab[];
+  activeFilePath: string | null;
+  onSelectTab: (filePath: string) => void;
+  onCloseTab: (filePath: string) => void;
   onChange: (val: string) => void;
   onSave: () => void;
-  isDirty: boolean;
   fontSize?: number;
   fontFamily?: string;
   tabSize?: number;
@@ -64,11 +66,12 @@ function getLanguageFromPath(filePath: string | null): string {
 }
 
 export const CodeEditor: React.FC<CodeEditorProps> = ({
-  filePath,
-  content,
+  tabs,
+  activeFilePath,
+  onSelectTab,
+  onCloseTab,
   onChange,
   onSave,
-  isDirty,
   fontSize = 14,
   fontFamily = 'Consolas, "Fira Code", monospace',
   tabSize = 2,
@@ -77,6 +80,11 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
   lineNumbers = true,
   monacoTheme = 'vs-dark'
 }) => {
+  const activeTab = tabs.find((t) => t.filePath === activeFilePath) || tabs[0] || null;
+  const filePath = activeTab?.filePath || null;
+  const content = activeTab?.content || '';
+  const isDirty = !!activeTab?.isDirty;
+
   const isMarkdown = filePath?.toLowerCase().endsWith('.md');
   const [markdownViewMode, setMarkdownViewMode] = useState<'both' | 'preview' | 'code'>('both');
   const language = getLanguageFromPath(filePath);
@@ -86,172 +94,69 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       noSemanticValidation: false,
       noSyntaxValidation: false
     });
-
-    // Register Inlay Hints provider for function dependency analysis
-    // Detects imported items/modules used inside function bodies and displays them next to the function declaration
-    const supportedLanguages = ['typescript', 'javascript'];
-    
-    // Check if provider is already registered to avoid duplicates
-    if (!(monaco as any).__funcDepsProviderRegistered) {
-      (monaco as any).__funcDepsProviderRegistered = true;
-
-      const provider = {
-        provideInlayHints(model: any) {
-          const hints: any[] = [];
-          const text = model.getValue();
-          const lines = text.split('\n');
-
-          // 1. Collect all imported identifiers: import { a, b } from 'pkg', import c from 'pkg', const d = require('pkg')
-          const imports: { name: string; source: string }[] = [];
-          const importNamedRegex = /import\s+\{([^}]+)\}\s+from\s+['"]([^'"]+)['"]/g;
-          const importDefaultRegex = /import\s+([a-zA-Z0-9_$]+)\s*(?:,\s*\{([^}]+)\})?\s+from\s+['"]([^'"]+)['"]/g;
-          const requireRegex = /(?:const|let|var)\s+(?:\{([^}]+)\}|([a-zA-Z0-9_$]+))\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-
-          let match;
-          while ((match = importNamedRegex.exec(text)) !== null) {
-            const names = match[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
-            names.forEach((n) => {
-              if (n) imports.push({ name: n, source: match[2] });
-            });
-          }
-
-          while ((match = importDefaultRegex.exec(text)) !== null) {
-            if (match[1]) imports.push({ name: match[1].trim(), source: match[3] });
-            if (match[2]) {
-              const names = match[2].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
-              names.forEach((n) => {
-                if (n) imports.push({ name: n, source: match[3] });
-              });
-            }
-          }
-
-          while ((match = requireRegex.exec(text)) !== null) {
-            const source = match[3];
-            if (match[1]) {
-              const names = match[1].split(',').map((s) => s.trim().split(/\s+as\s+/).pop()?.trim()).filter(Boolean);
-              names.forEach((n) => {
-                if (n) imports.push({ name: n, source });
-              });
-            } else if (match[2]) {
-              imports.push({ name: match[2].trim(), source });
-            }
-          }
-
-          if (imports.length === 0) {
-            return { hints: [], dispose: () => {} };
-          }
-
-          // 2. Identify function declarations & arrow functions
-          // e.g.: function foo(...) {, const bar = (...) => {, const baz = async function(...) {
-          for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const funcMatch =
-              line.match(/(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([a-zA-Z0-9_$]+)/) ||
-              line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?\(/) ||
-              line.match(/(?:export\s+)?(?:const|let|var)\s+([a-zA-Z0-9_$]+)\s*=\s*(?:async\s*)?[a-zA-Z0-9_$]+\s*=>/);
-
-            if (funcMatch) {
-              const funcName = funcMatch[1];
-              // Find function declaration column
-              const nameIndex = line.indexOf(funcName);
-              if (nameIndex === -1) continue;
-
-              // Read function body (next ~50 lines or until balanced braces)
-              const bodyLines: string[] = [];
-              let braceCount = 0;
-              let bodyStarted = false;
-
-              for (let j = i; j < Math.min(i + 60, lines.length); j++) {
-                const cur = lines[j];
-                for (const char of cur) {
-                  if (char === '{') {
-                    braceCount++;
-                    bodyStarted = true;
-                  } else if (char === '}') {
-                    braceCount--;
-                  }
-                }
-                bodyLines.push(cur);
-                if (bodyStarted && braceCount <= 0) break;
-              }
-
-              const bodyText = bodyLines.join('\n');
-
-              // Find which imported dependencies are referenced inside this function
-              const usedDeps = new Set<string>();
-              for (const imp of imports) {
-                if (imp.name === funcName) continue; // Don't self-reference
-                const depWordRegex = new RegExp(`\\b${imp.name}\\b`);
-                if (depWordRegex.test(bodyText)) {
-                  usedDeps.add(imp.name);
-                }
-              }
-
-              if (usedDeps.size > 0) {
-                const depsList = Array.from(usedDeps).slice(0, 4);
-                const extraCount = usedDeps.size - depsList.length;
-                const labelText = `[deps: ${depsList.join(', ')}${extraCount > 0 ? ` +${extraCount}` : ''}]`;
-
-                hints.push({
-                  kind: monaco.languages.InlayHintKind.Type,
-                  position: {
-                    lineNumber: i + 1,
-                    column: nameIndex + funcName.length + 1
-                  },
-                  label: labelText,
-                  tooltip: `Dépendances externes utilisées par ${funcName} :\n${Array.from(usedDeps).join(', ')}`,
-                  paddingLeft: true,
-                  paddingRight: true
-                });
-              }
-            }
-          }
-
-          return {
-            hints,
-            dispose: () => {}
-          };
-        }
-      };
-
-      supportedLanguages.forEach((lang) => {
-        monaco.languages.registerInlayHintsProvider(lang, provider);
-      });
-    }
   };
 
-  if (!filePath) {
+  if (tabs.length === 0 || !activeTab) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#161618] border border-neutral-800/80 rounded-2xl m-2 shadow-xl text-neutral-400">
-        <div className="text-center space-y-3 max-w-sm">
-          <div className="w-14 h-14 mx-auto rounded-2xl bg-neutral-800/80 flex items-center justify-center text-blue-400 shadow-inner">
-            <Code size={28} />
-          </div>
-          <p className="text-base font-semibold text-neutral-200">Prêt à coder</p>
-          <p className="text-xs text-neutral-500 leading-relaxed">
-            Sélectionnez un fichier dans l'explorateur ou utilisez l'IA latérale pour générer une structure de projet.
-          </p>
+      <div className="flex-1 flex flex-col items-center justify-center h-full bg-[#161618] border border-neutral-800/80 rounded-2xl m-2 shadow-xl select-none text-neutral-500">
+        <div className="p-4 rounded-2xl bg-[#1d1d21] border border-neutral-800 mb-3 shadow">
+          <FileText size={32} className="text-neutral-600" />
         </div>
+        <p className="text-sm font-medium text-neutral-400">Aucun fichier ouvert</p>
+        <p className="text-xs text-neutral-500 mt-1">
+          Sélectionnez un fichier dans l&apos;explorateur ou utilisez <kbd className="px-1.5 py-0.5 rounded bg-neutral-800 border border-neutral-700 font-mono text-[11px] text-neutral-300">Ctrl+P</kbd>
+        </p>
       </div>
     );
   }
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#161618] border border-neutral-800/80 rounded-2xl m-2 shadow-xl overflow-hidden">
-      {/* Tab bar header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-[#1b1b1e] border-b border-neutral-800 text-xs">
-        <div className="flex items-center gap-2">
-          <FileIcon fileName={filePath} size={15} />
-          <span className="text-white font-medium">
-            {filePath.split(/[\\/]/).pop()}
-          </span>
-          {isDirty && <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" title="Modifications non enregistrées" />}
-          <span className="text-[10px] text-blue-400 font-semibold uppercase px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20">
-            {language}
-          </span>
+      {/* Real Multi-Tabs Bar */}
+      <div className="flex items-center justify-between bg-[#19191c] border-b border-neutral-800 text-xs px-2 pt-1.5 select-none overflow-x-auto">
+        <div className="flex items-center gap-1 overflow-x-auto max-w-[80%] pb-1 scrollbar-none">
+          {tabs.map((tab) => {
+            const isActive = tab.filePath === activeFilePath;
+            return (
+              <div
+                key={tab.filePath}
+                onClick={() => onSelectTab(tab.filePath)}
+                className={`group flex items-center gap-2 px-3 py-1.5 rounded-t-xl cursor-pointer text-xs font-medium border-t border-x transition shrink-0 ${
+                  isActive
+                    ? 'bg-[#161618] border-neutral-700 text-white shadow-sm'
+                    : 'bg-[#1e1e22]/60 hover:bg-[#222226] border-transparent text-neutral-400 hover:text-neutral-200'
+                }`}
+              >
+                <FileIcon fileName={tab.fileName} size={14} />
+                <span className="truncate max-w-[140px]">{tab.fileName}</span>
+                {tab.isDirty ? (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTab(tab.filePath);
+                    }}
+                    className="w-2.5 h-2.5 rounded-full bg-blue-500 hover:bg-red-400 group-hover:scale-110 transition flex items-center justify-center cursor-pointer"
+                    title="Modifié - Cliquer pour fermer"
+                  />
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCloseTab(tab.filePath);
+                    }}
+                    title="Fermer l'onglet (Ctrl+W)"
+                    className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-neutral-700/80 hover:text-white text-neutral-500 transition"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Action buttons (Save, Markdown, Language) */}
+        <div className="flex items-center gap-2 pb-1 shrink-0 ml-2">
           {isMarkdown && (
             <div className="flex items-center bg-[#242428] rounded-lg p-0.5 border border-neutral-700">
               <button
@@ -280,6 +185,10 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
               </button>
             </div>
           )}
+
+          <span className="text-[10px] text-blue-400 font-semibold uppercase px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20">
+            {language}
+          </span>
 
           <button
             onClick={onSave}
@@ -318,10 +227,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
                 tabSize,
                 cursorBlinking: 'smooth',
                 quickSuggestions: true,
-                suggestOnTriggerCharacters: true,
-                inlayHints: {
-                  enabled: 'on'
-                }
+                suggestOnTriggerCharacters: true
               }}
             />
           </div>
