@@ -18,7 +18,7 @@ import {
   Activity,
   Search
 } from 'lucide-react';
-import { FileItem, GitStatus, TerminalTab, AppSettings, ExecutionLogItem, ToastNotification } from './types';
+import { FileItem, GitStatus, TerminalTab, AppSettings, ExecutionLogItem, ToastNotification, OpenTab } from './types';
 import { THEMES, ThemeConfig } from './theme';
 import { FileExplorer } from './components/FileExplorer';
 import { GitPanel } from './components/GitPanel';
@@ -33,6 +33,7 @@ import { RunLauncherModal } from './components/RunLauncherModal';
 import { ProcessManagerPanel } from './components/ProcessManagerPanel';
 import { SearchPanel } from './components/SearchPanel';
 import { ToastContainer } from './components/ToastContainer';
+import { CommandPalette } from './components/CommandPalette';
 
 const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 14,
@@ -52,9 +53,13 @@ const DEFAULT_SETTINGS: AppSettings = {
 };
 
 export function App() {
-  const [workspacePath, setWorkspacePath] = useState<string | null>(null);
+  const [workspacePath, setWorkspacePath] = useState<string | null>(() => {
+    return localStorage.getItem('ide_last_workspace') || null;
+  });
   const [files, setFiles] = useState<FileItem[]>([]);
-  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'search' | 'ai' | 'http' | 'logs' | 'processes' | null>('files');
+  const [activeSidePanel, setActiveSidePanel] = useState<'files' | 'git' | 'search' | 'ai' | 'http' | 'logs' | 'processes' | null>(() => {
+    return (localStorage.getItem('ide_active_panel') as any) || 'files';
+  });
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
 
   const addToast = useCallback((message: string, type: 'success' | 'error' | 'info' | 'warning' = 'info', title?: string) => {
@@ -81,11 +86,54 @@ export function App() {
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isRunModalOpen, setIsRunModalOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
-  // File editing state
-  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
-  const [fileContent, setFileContent] = useState<string>('');
-  const [originalContent, setOriginalContent] = useState<string>('');
+  // Multi-Tabs & File editing state
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>(() => {
+    try {
+      const stored = localStorage.getItem('ide_open_tabs');
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(() => {
+    return localStorage.getItem('ide_active_file') || null;
+  });
+
+  // Save session state to localStorage
+  useEffect(() => {
+    if (workspacePath) {
+      localStorage.setItem('ide_last_workspace', workspacePath);
+    } else {
+      localStorage.removeItem('ide_last_workspace');
+    }
+  }, [workspacePath]);
+
+  useEffect(() => {
+    if (activeSidePanel) {
+      localStorage.setItem('ide_active_panel', activeSidePanel);
+    }
+  }, [activeSidePanel]);
+
+  useEffect(() => {
+    try {
+      // Store tabs metadata without massive unsaved dirty states
+      localStorage.setItem('ide_open_tabs', JSON.stringify(openTabs));
+    } catch (e) {}
+  }, [openTabs]);
+
+  useEffect(() => {
+    if (activeFilePath) {
+      localStorage.setItem('ide_active_file', activeFilePath);
+    } else {
+      localStorage.removeItem('ide_active_file');
+    }
+  }, [activeFilePath]);
+
+  const activeTab = openTabs.find((t) => t.filePath === activeFilePath) || null;
+  const fileContent = activeTab?.content || '';
+  const originalContent = activeTab?.originalContent || '';
 
   // Git state
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
@@ -154,9 +202,8 @@ export function App() {
     const folder = await window.api.openFolderDialog();
     if (folder) {
       setWorkspacePath(folder);
+      setOpenTabs([]);
       setActiveFilePath(null);
-      setFileContent('');
-      setOriginalContent('');
 
       // Update primary terminal to the opened folder
       setTerminals((prev) => {
@@ -196,30 +243,87 @@ export function App() {
     }
   };
 
-  // Select File to view/edit
+  // Select / Open File into Multi-Tabs
   const handleSelectFile = async (filePath: string) => {
     if (!window.api) return;
+    const existingIndex = openTabs.findIndex((t) => t.filePath === filePath);
+    if (existingIndex !== -1) {
+      setActiveFilePath(filePath);
+      return;
+    }
+
     try {
       const content = await window.api.readFile(filePath);
+      const fileName = filePath.split(/[\\/]/).pop() || filePath;
+      const newTab: OpenTab = {
+        filePath,
+        fileName,
+        content,
+        originalContent: content,
+        isDirty: false
+      };
+      setOpenTabs((prev) => [...prev, newTab]);
       setActiveFilePath(filePath);
-      setFileContent(content);
-      setOriginalContent(content);
     } catch (err: any) {
       alert(err.message);
     }
   };
 
+  // Close Tab
+  const handleCloseTab = (filePathToClose: string) => {
+    const tabToClose = openTabs.find((t) => t.filePath === filePathToClose);
+    if (tabToClose?.isDirty) {
+      const confirmClose = window.confirm(
+        `Le fichier "${tabToClose.fileName}" a des modifications non enregistrées. Voulez-vous vraiment le fermer sans sauvegarder ?`
+      );
+      if (!confirmClose) return;
+    }
+
+    const filtered = openTabs.filter((t) => t.filePath !== filePathToClose);
+    setOpenTabs(filtered);
+
+    if (activeFilePath === filePathToClose) {
+      const nextTab = filtered[filtered.length - 1];
+      setActiveFilePath(nextTab ? nextTab.filePath : null);
+    }
+  };
+
+  // Update content of active file
+  const handleContentChange = (newContent: string) => {
+    if (!activeFilePath) return;
+    setOpenTabs((prev) =>
+      prev.map((tab) =>
+        tab.filePath === activeFilePath
+          ? {
+              ...tab,
+              content: newContent,
+              isDirty: newContent !== tab.originalContent
+            }
+          : tab
+      )
+    );
+  };
+
   // Save current file
   const handleSaveFile = useCallback(async () => {
     if (!activeFilePath || !window.api) return;
+    const tabToSave = openTabs.find((t) => t.filePath === activeFilePath);
+    if (!tabToSave) return;
+
     try {
-      await window.api.writeFile(activeFilePath, fileContent);
-      setOriginalContent(fileContent);
+      await window.api.writeFile(activeFilePath, tabToSave.content);
+      setOpenTabs((prev) =>
+        prev.map((tab) =>
+          tab.filePath === activeFilePath
+            ? { ...tab, originalContent: tab.content, isDirty: false }
+            : tab
+        )
+      );
       refreshGit();
     } catch (err: any) {
       alert(err.message);
     }
-  }, [activeFilePath, fileContent, refreshGit]);
+  }, [activeFilePath, openTabs, refreshGit]);
 
   // Auto-save logic
   useEffect(() => {
@@ -378,9 +482,19 @@ export function App() {
     }
   };
 
-  // Global keyboard shortcuts (Ctrl+S for save, Ctrl+, for settings, Ctrl+Shift+F for search)
+  // Global keyboard shortcuts (Ctrl+S for save, Ctrl+W for close tab, Ctrl+, for settings, Ctrl+Shift+F for search, Ctrl+P for command palette)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'w' || e.key === 'W')) {
+        e.preventDefault();
+        if (activeFilePath) {
+          handleCloseTab(activeFilePath);
+        }
+      }
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
         handleSaveFile();
@@ -396,7 +510,7 @@ export function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleSaveFile]);
+  }, [handleSaveFile, activeFilePath, handleCloseTab]);
 
   // Resizing mouse events
   useEffect(() => {
@@ -669,8 +783,9 @@ export function App() {
                 <AIAssistant
                   currentFile={activeFilePath}
                   currentCode={fileContent}
+                  geminiApiKey={settings.geminiApiKey}
                   onApplyCode={(newCode) => {
-                    setFileContent(newCode);
+                    handleContentChange(newCode);
                   }}
                   onRunTechnicalCommand={(cmd) => executeTrackedCommand(cmd, 'custom')}
                   workspacePath={workspacePath}
@@ -702,11 +817,12 @@ export function App() {
           {/* Editor Area */}
           <div className="flex-1 min-h-0">
             <CodeEditor
-              filePath={activeFilePath}
-              content={fileContent}
-              onChange={setFileContent}
+              tabs={openTabs}
+              activeFilePath={activeFilePath}
+              onSelectTab={(path) => setActiveFilePath(path)}
+              onCloseTab={handleCloseTab}
+              onChange={handleContentChange}
               onSave={handleSaveFile}
-              isDirty={fileContent !== originalContent}
               fontSize={settings.fontSize}
               fontFamily={settings.fontFamily}
               tabSize={settings.tabSize}
@@ -849,6 +965,27 @@ export function App() {
         activeFilePath={activeFilePath}
         onLaunch={(cmd, cwd, targetFile) => executeTrackedCommand(cmd, 'run', cwd, targetFile)}
         defaultRunCommand={settings.runCommand}
+      />
+
+      {/* Command Palette (Ctrl+P / Quick Open) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        files={files}
+        onSelectFile={handleSelectFile}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenFolder={handleOpenFolder}
+        onExecuteCommand={(cmdId) => {
+          if (cmdId === 'save') handleSaveFile();
+          else if (cmdId === 'search') setActiveSidePanel('search');
+          else if (cmdId === 'git') setActiveSidePanel('git');
+          else if (cmdId === 'ai') setActiveSidePanel('ai');
+          else if (cmdId === 'http') setActiveSidePanel('http');
+          else if (cmdId === 'toggle-terminal') setShowTerminalPanel((prev) => !prev);
+          else if (cmdId === 'new-terminal') handleAddTerminal();
+          else if (cmdId === 'run' && settings.runCommand) executeTrackedCommand(settings.runCommand, 'run', workspacePath || undefined);
+          else if (cmdId === 'build' && settings.buildCommand) executeTrackedCommand(settings.buildCommand, 'build', workspacePath || undefined);
+        }}
       />
 
       {/* Automatic Git Init Prompt Modal */}

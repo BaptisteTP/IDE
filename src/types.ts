@@ -43,6 +43,14 @@ export interface RunningProcessItem {
   date?: string;
 }
 
+export interface OpenTab {
+  filePath: string;
+  fileName: string;
+  content: string;
+  originalContent: string;
+  isDirty: boolean;
+}
+
 export interface TerminalTab {
   id: string;
   title: string;
@@ -176,6 +184,10 @@ declare global {
       readFile: (filePath: string) => Promise<string>;
       writeFile: (filePath: string, content: string) => Promise<{ success: boolean }>;
       createFile: (filePath: string) => Promise<{ success: boolean }>;
+      createDirectory: (dirPath: string) => Promise<{ success: boolean }>;
+      moveItem: (sourcePath: string, targetPath: string) => Promise<{ success: boolean; destination?: string }>;
+      renameItem: (oldPath: string, newPath: string) => Promise<{ success: boolean }>;
+      deleteItem: (targetPath: string) => Promise<{ success: boolean }>;
       searchFiles: (params: {
         dirPath: string;
         query: string;

@@ -5,16 +5,67 @@ const { simpleGit } = require('simple-git');
 const pty = require('node-pty');
 const { GoogleGenAI } = require('@google/genai');
 
+// Fix Chromium/Electron Windows GPU Cache lock bug
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
+// Ensure single instance lock to prevent cache lock collision
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+// Customize user data / cache directory in dev mode to avoid system collisions
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'antigravity-ide-dev'));
+}
+
 let mainWindow;
+const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
+
+function loadWindowState() {
+  try {
+    if (fs.existsSync(windowStateFile)) {
+      return JSON.parse(fs.readFileSync(windowStateFile, 'utf8'));
+    }
+  } catch (e) {}
+  return { width: 1400, height: 900, isMaximized: false };
+}
+
+function saveWindowState() {
+  if (!mainWindow) return;
+  try {
+    const isMaximized = mainWindow.isMaximized();
+    const bounds = mainWindow.getBounds();
+    const state = {
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      isMaximized
+    };
+    fs.writeFileSync(windowStateFile, JSON.stringify(state), 'utf8');
+  } catch (e) {}
+}
 
 function createWindow() {
+  const state = loadWindowState();
+
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: state.width || 1400,
+    height: state.height || 900,
+    x: state.x !== undefined ? state.x : undefined,
+    y: state.y !== undefined ? state.y : undefined,
     minWidth: 900,
     minHeight: 650,
     backgroundColor: '#121214',
-    titleBarStyle: 'default',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -22,6 +73,23 @@ function createWindow() {
       sandbox: false
     }
   });
+
+  if (state.isMaximized) {
+    mainWindow.maximize();
+  }
+
+  mainWindow.setMenuBarVisibility(false);
+
+  // Debounce saving window state on move / resize
+  let resizeTimer;
+  const triggerSave = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(saveWindowState, 300);
+  };
+
+  mainWindow.on('resize', triggerSave);
+  mainWindow.on('move', triggerSave);
+  mainWindow.on('close', saveWindowState);
 
   const devUrl = 'http://localhost:5173';
   if (process.env.NODE_ENV === 'development' || !app.isPackaged) {
@@ -112,6 +180,55 @@ ipcMain.handle('fs:createFile', async (_, filePath) => {
     return { success: true };
   } catch (err) {
     throw new Error(`Impossible de créer le fichier: ${err.message}`);
+  }
+});
+
+ipcMain.handle('fs:createDirectory', async (_, dirPath) => {
+  try {
+    await fs.promises.mkdir(dirPath, { recursive: true });
+    return { success: true };
+  } catch (err) {
+    throw new Error(`Impossible de créer le dossier: ${err.message}`);
+  }
+});
+
+ipcMain.handle('fs:moveItem', async (_, { sourcePath, targetPath }) => {
+  try {
+    // If target is an existing directory, put source inside target
+    let destination = targetPath;
+    if (fs.existsSync(targetPath)) {
+      const stat = await fs.promises.stat(targetPath);
+      if (stat.isDirectory()) {
+        destination = path.join(targetPath, path.basename(sourcePath));
+      }
+    }
+    await fs.promises.rename(sourcePath, destination);
+    return { success: true, destination };
+  } catch (err) {
+    throw new Error(`Impossible de déplacer: ${err.message}`);
+  }
+});
+
+ipcMain.handle('fs:renameItem', async (_, { oldPath, newPath }) => {
+  try {
+    await fs.promises.rename(oldPath, newPath);
+    return { success: true };
+  } catch (err) {
+    throw new Error(`Impossible de renommer: ${err.message}`);
+  }
+});
+
+ipcMain.handle('fs:deleteItem', async (_, targetPath) => {
+  try {
+    const stat = await fs.promises.stat(targetPath);
+    if (stat.isDirectory()) {
+      await fs.promises.rm(targetPath, { recursive: true, force: true });
+    } else {
+      await fs.promises.unlink(targetPath);
+    }
+    return { success: true };
+  } catch (err) {
+    throw new Error(`Impossible de supprimer: ${err.message}`);
   }
 });
 
